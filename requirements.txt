@@ -4,3 +4,4 @@ pysdl2-dll
 requests
 urllib3
 pyinstaller
+python-dotenv

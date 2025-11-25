@@ -8,3 +8,5 @@ assets/images/cache/*
 EmuDrop.log
 catalog.db
 temp
+dist
+.build
