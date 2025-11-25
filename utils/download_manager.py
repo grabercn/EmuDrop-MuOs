@@ -4,6 +4,7 @@ from requests import Session
 import threading
 import time
 import json
+import certifi
 from dataclasses import dataclass, fields
 from utils.config import Config
 from utils.logger import logger
@@ -64,6 +65,8 @@ class DownloadManager:
         # Thread references
         self.download_url = None
         self.session = Session()
+        # Use certifi for SSL verification
+        self.session.verify = certifi.where()
         self.download_thread = None
         self.size_check_thread = None
         self.size_check_complete = threading.Event()

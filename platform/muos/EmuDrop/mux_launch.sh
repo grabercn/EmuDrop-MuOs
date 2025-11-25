@@ -2,8 +2,6 @@
 # HELP: EmuDrop ROM downloader for muOS
 # ICON: emudrop
 
-set -euo pipefail
-
 # Source muOS helper functions
 . /opt/muos/script/var/func.sh
 
@@ -31,27 +29,33 @@ cd "${APP_DIR}" || exit 1
 # Load controller mappings from muOS if available
 if [ -f "${ROOT_DIR}/MUOS/PortMaster/muos/control.txt" ]; then
     # shellcheck disable=SC1090
-    source "${ROOT_DIR}/MUOS/PortMaster/muos/control.txt"
-    get_controls
+    source "${ROOT_DIR}/MUOS/PortMaster/muos/control.txt" || true
+    get_controls || true
 fi
+
+echo "Starting Python application..." >> "${LOG_FILE}"
 
 # Runtime environment
 export LOG_FILE="${LOG_DIR}/$(date +'%Y-%m-%d').log"
 export PYTHONPATH="${APP_DIR}/deps:${PYTHONPATH:-}"
 SDL2_DLL_DIR="${APP_DIR}/deps/sdl2dll/dll"
 ALT_SDL2_DLL_DIR="${APP_DIR}/deps/pysdl2_dll"
+PILLOW_LIB_DIR="${APP_DIR}/libs/pillow.libs"
 
+LD_PATHS="${APP_DIR}/libs"
+if [ -d "${PILLOW_LIB_DIR}" ]; then
+    LD_PATHS="${PILLOW_LIB_DIR}:${LD_PATHS}"
+fi
 if [ -d "${SDL2_DLL_DIR}" ]; then
     export PYSDL2_DLL_PATH="${SDL2_DLL_DIR}"
-    export LD_LIBRARY_PATH="${SDL2_DLL_DIR}:${APP_DIR}/libs:${LD_LIBRARY_PATH:-}"
+    LD_PATHS="${SDL2_DLL_DIR}:${LD_PATHS}"
 elif [ -d "${ALT_SDL2_DLL_DIR}" ]; then
     export PYSDL2_DLL_PATH="${ALT_SDL2_DLL_DIR}"
-    export LD_LIBRARY_PATH="${ALT_SDL2_DLL_DIR}:${APP_DIR}/libs:${LD_LIBRARY_PATH:-}"
+    LD_PATHS="${ALT_SDL2_DLL_DIR}:${LD_PATHS}"
 else
-    # Use system SDL2, ensure libs are in path
-    export LD_LIBRARY_PATH="${APP_DIR}/libs:/usr/lib:/usr/local/lib:${LD_LIBRARY_PATH:-}"
     unset PYSDL2_DLL_PATH
 fi
+export LD_LIBRARY_PATH="${LD_PATHS}:${LD_LIBRARY_PATH:-}"
 export SDL_AUDIODRIVER=alsa
 export SDL_VIDEODRIVER=kmsdrm
 export HOME="${APP_DIR}"
