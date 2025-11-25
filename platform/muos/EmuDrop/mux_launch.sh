@@ -10,8 +10,11 @@ echo app >/tmp/act_go
 ROOT_DIR="$(GET_VAR "device" "storage/rom/mount")"
 APP_DIR="${ROOT_DIR}/MUOS/application/EmuDrop"
 LOG_DIR="${APP_DIR}/logs"
+export LOG_FILE="${LOG_DIR}/$(date +'%Y-%m-%d').log"
 ICON_DIR="/opt/muos/default/MUOS/theme/active/glyph/muxapp"
 FONTS_DIR="/usr/share/fonts/emudrop"
+SDL_FBDEV=${SDL_FBDEV:-/dev/fb0}
+export SDL_FBDEV
 
 mkdir -p "${LOG_DIR}"
 exec >"${LOG_DIR}/launch.log" 2>&1
@@ -26,6 +29,13 @@ cp "${APP_DIR}/assets/fonts/arial.ttf" "${FONTS_DIR}/arial.ttf"
 
 cd "${APP_DIR}" || exit 1
 
+# Resolve Python path early for bootstrap/download steps
+PYTHON_BIN="$(command -v python3 || command -v /opt/muos/python/bin/python3 || true)"
+if [ -z "${PYTHON_BIN}" ]; then
+    echo "python3 not found on device" | tee -a "${LOG_FILE}"
+    exit 1
+fi
+
 # Load controller mappings from muOS if available
 if [ -f "${ROOT_DIR}/MUOS/PortMaster/muos/control.txt" ]; then
     # shellcheck disable=SC1090
@@ -36,8 +46,8 @@ fi
 echo "Starting Python application..." >> "${LOG_FILE}"
 
 # Runtime environment
-export LOG_FILE="${LOG_DIR}/$(date +'%Y-%m-%d').log"
 export PYTHONPATH="${APP_DIR}/deps:${PYTHONPATH:-}"
+export SDL_GAMECONTROLLERCONFIG_FILE="/usr/lib/gamecontrollerdb.txt"
 SDL2_DLL_DIR="${APP_DIR}/deps/sdl2dll/dll"
 ALT_SDL2_DLL_DIR="${APP_DIR}/deps/pysdl2_dll"
 PILLOW_LIB_DIR="${APP_DIR}/libs/pillow.libs"
@@ -57,8 +67,10 @@ else
 fi
 export LD_LIBRARY_PATH="${LD_PATHS}:${LD_LIBRARY_PATH:-}"
 export SDL_AUDIODRIVER=alsa
-export SDL_VIDEODRIVER=kmsdrm
 export HOME="${APP_DIR}"
+# Ensure SDL has a runtime dir for DRM devices (muOS may not set this)
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+mkdir -p "${XDG_RUNTIME_DIR}"
 
 # App-specific paths
 export ROMS_DIR="${ROOT_DIR}/ROMS/"
@@ -76,14 +88,115 @@ echo "Listing deps:" >> "${LOG_FILE}"
 ls -lh "${APP_DIR}/deps" >> "${LOG_FILE}" 2>&1 || echo "No deps dir" >> "${LOG_FILE}"
 echo "------------------" >> "${LOG_FILE}"
 
-# Ensure executables are runnable
-chmod -R 755 "${APP_DIR}/assets/executables" || true
+# Ensure the game catalog exists; download latest DB release from GitHub if missing
+if [ ! -s "${APP_DIR}/assets/catalog.db" ]; then
+    echo "Catalog DB missing, downloading latest release..." | tee -a "${LOG_FILE}"
+    "${PYTHON_BIN}" - <<'PY' >>"${LOG_FILE}" 2>&1 || {
+        echo "Failed to bootstrap catalog.db. Check network connectivity and try again." | tee -a "${LOG_FILE}"
+        exit 1
+    }
+import json, os, sys, urllib.request, pathlib, ssl
 
-PYTHON_BIN="$(command -v python3 || command -v /opt/muos/python/bin/python3 || true)"
-if [ -z "${PYTHON_BIN}" ]; then
-    echo "python3 not found on device" | tee -a "${LOG_FILE}"
+REPO = "ahmadteeb/EmuDrop"
+ASSETS_DIR = pathlib.Path(os.environ.get("APP_DIR", ".")) / "assets"
+DB_PATH = ASSETS_DIR / "catalog.db"
+TAGS_URL = f"https://api.github.com/repos/{REPO}/tags"
+CTX = ssl._create_unverified_context()
+
+def latest_db_tag():
+    try:
+        with urllib.request.urlopen(TAGS_URL, timeout=10, context=CTX) as resp:
+            tags = json.loads(resp.read().decode("utf-8"))
+        for tag in tags:
+            name = tag.get("name", "")
+            if name.endswith("-db"):
+                version = name[:-3]
+                if not version.startswith("v"):
+                    version = f"v{version}"
+                return version
+    except Exception as e:
+        print(f"[catalog] tag fetch failed: {e}")
+    return None
+
+def download_db(version):
+    url = f"https://github.com/{REPO}/releases/download/{version}-db/catalog-{version}.db"
+    try:
+        with urllib.request.urlopen(url, timeout=30, context=CTX) as resp:
+            data = resp.read()
+        ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(DB_PATH, "wb") as f:
+            f.write(data)
+        print(f"[catalog] downloaded {len(data)} bytes from {url}")
+        return True
+    except Exception as e:
+        print(f"[catalog] download failed: {e}")
+        return False
+
+ver = latest_db_tag()
+if not ver:
+    print("[catalog] no db tag found; aborting")
+    sys.exit(1)
+if not download_db(ver):
+    sys.exit(1)
+print(f"[catalog] catalog.db ready at {DB_PATH}")
+PY
+fi
+
+# Discover available SDL video drivers on the device
+AVAILABLE_DRIVERS="$(
+    SDL_VIDEODRIVER="" "${PYTHON_BIN}" - <<'PY' 2>/dev/null
+import sdl2
+drivers = [sdl2.SDL_GetVideoDriver(i).decode("utf-8") for i in range(sdl2.SDL_GetNumVideoDrivers())]
+print(",".join(drivers))
+PY
+)"
+echo "Available SDL drivers: ${AVAILABLE_DRIVERS}" >> "${LOG_FILE}"
+
+# Pick an SDL video driver with runtime detection.
+# RG35XX-SP (H700 + Mali) exposes only the "mali" SDL driver, so try that first,
+# then kmsdrm on multiple cards, then fbcon, finally dummy.
+VIDEO_DRIVER_CANDIDATES=("mali" "${SDL_VIDEODRIVER:-kmsdrm}:0" "${SDL_VIDEODRIVER:-kmsdrm}:1" "fbcon" "dummy")
+VIDEO_DRIVER_SELECTED=""
+SDL_KMS_INDEX_SELECTED=""
+for drv_entry in "${VIDEO_DRIVER_CANDIDATES[@]}"; do
+    IFS=":" read -r drv kms_index <<<"${drv_entry}"
+    if [ "${drv}" = "kmsdrm" ]; then
+        export SDL_KMSDRM_DEVICE_INDEX="${kms_index}"
+    else
+        unset SDL_KMSDRM_DEVICE_INDEX
+    fi
+    echo "Testing SDL_VIDEODRIVER=${drv} KMS_INDEX=${SDL_KMSDRM_DEVICE_INDEX:-none}" >> "${LOG_FILE}"
+    if SDL_VIDEODRIVER="${drv}" "${PYTHON_BIN}" - <<'PY' >>"${LOG_FILE}" 2>&1; then
+import sys, os
+import sdl2
+drv = os.environ.get("SDL_VIDEODRIVER")
+if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO) < 0:
+    err = sdl2.SDL_GetError().decode("utf-8")
+    sys.stderr.write(f"SDL init failed for {drv}: {err}\n")
+    sys.exit(1)
+sdl2.SDL_Quit()
+PY
+        VIDEO_DRIVER_SELECTED="${drv}"
+        if [ "${drv}" = "kmsdrm" ]; then
+            SDL_KMS_INDEX_SELECTED="${kms_index}"
+        fi
+        break
+    fi
+done
+
+if [ -z "${VIDEO_DRIVER_SELECTED}" ]; then
+    echo "No usable SDL video driver found (tried ${VIDEO_DRIVER_CANDIDATES[*]})" | tee -a "${LOG_FILE}"
     exit 1
 fi
+
+export SDL_VIDEODRIVER="${VIDEO_DRIVER_SELECTED}"
+if [ "${VIDEO_DRIVER_SELECTED}" = "kmsdrm" ] && [ -n "${SDL_KMS_INDEX_SELECTED}" ]; then
+    export SDL_KMSDRM_DEVICE_INDEX="${SDL_KMS_INDEX_SELECTED}"
+fi
+echo "Selected SDL_VIDEODRIVER=${SDL_VIDEODRIVER}" >> "${LOG_FILE}"
+
+# Ensure executables are runnable
+chmod -R 755 "${APP_DIR}/assets/executables" || true
 
 "${PYTHON_BIN}" -u main.py >"${LOG_FILE}" 2>&1
 

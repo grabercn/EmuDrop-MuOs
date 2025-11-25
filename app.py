@@ -83,7 +83,32 @@ class GameDownloaderApp:
         """
         # Set the singleton instance
         GameDownloaderApp.instance = self
-        
+
+        # Pre-initialize attributes so cleanup can run even if init fails early
+        self.downloads: Dict[str, Dict[str, Any]] = {}
+        self.download_manager = None
+        self.texture_manager = None
+        self.renderer = None
+        self.window = None
+        self.font = None
+        self.loading_screen = None
+        self.view_state = ViewState()
+        self.nav_state = NavigationState()
+        self.held_joy_buttons = {}
+        self.held_hat_button = sdl2.SDL_HAT_CENTERED
+        self.last_hat_time: int = 0
+        self.alert_manager = AlertManager.get_instance()
+        self.database = None
+        self.cached_platforms = None
+        self.cached_games = {}
+        self.cached_sources = {}
+        self.game_hold_timer: int = 0
+        self.is_image_loaded: bool = False
+        self.last_selected_game: int = -1
+        self.search_text: str = ""
+        self.selected_download: Optional[str] = None
+        self.scroll_offset: int = 0
+
         try:
             # Initialize SDL subsystems
             self._initialize_sdl()
@@ -100,36 +125,13 @@ class GameDownloaderApp:
                 Config.SCREEN_WIDTH, 
                 Config.SCREEN_HEIGHT,
             )
-            
+
             # Initialize views
             self._initialize_views()
-            
-            # Initialize states
-            self.view_state = ViewState()
-            self.nav_state = NavigationState()
-            self.download_manager = None
-            self.downloads: Dict[str, Dict[str, Any]] = {}
-            self.game_hold_timer: int = 0
-            self.is_image_loaded: bool = False
-            self.last_selected_game: int = -1
-            self.search_text: str = ""
-            self.selected_download: Optional[str] = None  # Track selected download in download view
-            self.scroll_offset: int = 0  # Track scroll position in download view
-            
+
+            # Initialize managers/state that rely on SDL being ready
             self.database = Database()
-            
-            # Cache for platforms
-            self.cached_platforms = None
-            self.cached_games = {}  # Dictionary to cache games by platform_id and source_id
-            self.cached_sources = {}
-            
-            # Initialize alert manager
-            self.alert_manager = AlertManager.get_instance()
             self.alert_manager.set_app(self)
-            
-            self.held_joy_buttons = {}
-            self.held_hat_button = sdl2.SDL_HAT_CENTERED
-            self.last_hat_time: int = 0
             
             # Initialize joystick if available
             self._initialize_joystick()
