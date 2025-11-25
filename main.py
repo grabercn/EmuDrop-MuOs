@@ -5,8 +5,6 @@ This module initializes and runs the main application loop, handling any top-lev
 exceptions that might occur during execution.
 """
 from typing import NoReturn
-from app import GameDownloaderApp
-from utils.logger import logger
 import sys
 
 def main() -> NoReturn:
@@ -16,19 +14,35 @@ def main() -> NoReturn:
     Initializes the GameDownloaderApp and handles any uncaught exceptions,
     ensuring they are properly logged before the application exits.
     """
+    # Import logger first
     try:
+        from utils.logger import logger
+    except ImportError as e:
+        print(f"CRITICAL: Failed to import logger: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        logger.info("Starting application...")
+        
         #load .env file if in development
         if not getattr(sys, 'frozen', False):
             from dotenv import load_dotenv
             load_dotenv()
             logger.info("Environment variables have been loaded successfully from .env file")
             
+        # Import app here to catch dependency errors (SDL2, Pillow, etc.)
+        from app import GameDownloaderApp
+        
         app = GameDownloaderApp()
         app.run()
     except KeyboardInterrupt:
         logger.info("Application terminated by user")
     except Exception as e:
         logger.error(f"Application failed to start: {e}", exc_info=True)
+        # Also print to stderr in case file logging failed
+        print(f"CRITICAL ERROR: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
     finally:
         sys.exit(0)
 

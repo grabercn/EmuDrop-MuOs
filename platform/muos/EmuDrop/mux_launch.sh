@@ -48,7 +48,9 @@ elif [ -d "${ALT_SDL2_DLL_DIR}" ]; then
     export PYSDL2_DLL_PATH="${ALT_SDL2_DLL_DIR}"
     export LD_LIBRARY_PATH="${ALT_SDL2_DLL_DIR}:${APP_DIR}/libs:${LD_LIBRARY_PATH:-}"
 else
-    export LD_LIBRARY_PATH="${APP_DIR}/libs:${LD_LIBRARY_PATH:-}"
+    # Use system SDL2, ensure libs are in path
+    export LD_LIBRARY_PATH="${APP_DIR}/libs:/usr/lib:/usr/local/lib:${LD_LIBRARY_PATH:-}"
+    unset PYSDL2_DLL_PATH
 fi
 export SDL_AUDIODRIVER=alsa
 export SDL_VIDEODRIVER=kmsdrm
@@ -58,6 +60,17 @@ export HOME="${APP_DIR}"
 export ROMS_DIR="${ROOT_DIR}/ROMS/"
 export IMGS_DIR="${ROOT_DIR}/ROMS/{SYSTEM}/images/{IMAGE_NAME}-image.png"
 export EXECUTABLES_DIR="${APP_DIR}/assets/executables/"
+
+# Debug info
+echo "--- Debug Info ---" >> "${LOG_FILE}"
+echo "Date: $(date)" >> "${LOG_FILE}"
+echo "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}" >> "${LOG_FILE}"
+echo "PYTHONPATH: ${PYTHONPATH}" >> "${LOG_FILE}"
+echo "Listing libs:" >> "${LOG_FILE}"
+ls -lh "${APP_DIR}/libs" >> "${LOG_FILE}" 2>&1 || echo "No libs dir" >> "${LOG_FILE}"
+echo "Listing deps:" >> "${LOG_FILE}"
+ls -lh "${APP_DIR}/deps" >> "${LOG_FILE}" 2>&1 || echo "No deps dir" >> "${LOG_FILE}"
+echo "------------------" >> "${LOG_FILE}"
 
 # Ensure executables are runnable
 chmod -R 755 "${APP_DIR}/assets/executables" || true

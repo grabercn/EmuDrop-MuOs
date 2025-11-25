@@ -5,7 +5,7 @@ BUILD_ROOT := .build
 APP_BUILD := $(BUILD_ROOT)/$(APP_NAME)
 DIST_DIR := dist
 DIST_DIR_READY := $(DIST_DIR)/.dirstamp
-TARGET_PLATFORM ?= manylinux_2_28_aarch64
+TARGET_PLATFORM ?= manylinux_2_17_aarch64
 TARGET_PYTHON_VERSION ?= 3.11
 TARGET_PYTHON_ABI ?= cp$(subst .,,$(TARGET_PYTHON_VERSION))
 
