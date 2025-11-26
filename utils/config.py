@@ -136,6 +136,83 @@ class Config:
         "MAME2010": "Arcade",
     }
 
+    # Override with updated muOS folder display names
+    MUOS_PLATFORM_NAMES = {
+        # Arcade / multi
+        "MAME": "Arcade",
+        "MAME2003PLUS": "Arcade",
+        "MAME2010": "Arcade",
+        "FBNEO": "Arcade",
+        "CPS1": "Arcade",
+        "CPS2": "Arcade",
+        "CPS3": "Arcade",
+        "OPENBOR": "External - Ports",
+        "CANNONBALL": "External - Ports",
+
+        # Nintendo
+        "GB": "Nintendo Game Boy",
+        "GBC": "Nintendo Game Boy Color",
+        "GBA": "Nintendo Game Boy Advance",
+        "NDS": "Nintendo DS",
+        "N64": "Nintendo 64",
+        "N64DD": "Nintendo N64",
+        "FC": "Nintendo NES - Famicom",
+        "NES": "Nintendo NES - Famicom",
+        "FDS": "Nintendo NES - Famicom",
+        "SFC": "Nintendo SNES - SFC",
+        "SFCMSU": "Nintendo SNES - SFC",
+        "VB": "Nintendo Virtual Boy",
+        "SGB": "Nintendo Game Boy",
+
+        # Sega
+        "MS": "Sega Master System",
+        "GG": "Sega Game Gear",
+        "MD": "Sega Mega Drive - Genesis",
+        "GENESIS": "Sega Mega Drive - Genesis",
+        "SEGA32X": "Sega 32X",
+        "SEGACD": "Sega Mega CD - Sega CD",
+        "DC": "Sega Dreamcast",
+        "NAOMI": "Sega Atomiswave Naomi",
+        "ATOMISWAVE": "Sega Atomiswave Naomi",
+        "SATURN": "Sega Dreamcast",
+        "SG1000": "Sega Master System",
+
+        # Sony
+        "PS": "Sony PlayStation",
+        "PSP": "Sony PlayStation Portable",
+        "PSPMINIS": "Sony PlayStation Portable",
+
+        # NEC / PC Engine
+        "PCE": "NEC PC Engine",
+        "PCECD": "NEC PC Engine CD",
+        "PCFX": "NEC PC Engine SuperGrafx",
+        "SFX": "NEC PC Engine SuperGrafx",
+
+        # SNK / Neo Geo
+        "NEOGEO": "SNK Neo Geo",
+        "NEOCD": "SNK Neo Geo CD",
+        "NGP": "SNK Neo Geo Pocket - Color",
+
+        # Atari
+        "ATARI2600": "Atari 2600",
+        "ATARI5200": "Atari 5200",
+        "ATARI7800": "Atari 2600",
+        "ATARIST": "Atari 2600",
+        "ATARI800": "Atari 2600",
+        "LYNX": "Atari Lynx",
+
+        # Commodore / Amiga
+        "AMIGA": "Commodore Amiga",
+        "AMIGACD": "Commodore Amiga",
+        "AMIGACDTV": "Commodore Amiga",
+        "C64": "Commodore C64",
+
+        # PC / Misc
+        "DOS": "PC DOS",
+        "SCUMMVM": "ScummVM",
+        "PICO": "PICO-8",
+    }
+
     # Load System OS
     with open(os.path.join(ASSETS_DIR, 'settings.json'), 'r') as f:
         SYSTEMS_OS = json.loads(f.read()).get('os', 'stock')
@@ -164,6 +241,7 @@ class Config:
     # Logging settings
     LOG_FILE = f'{APP_NAME}.log'
     LOG_LEVEL = 'INFO'
+    SKIP_SCRAPE = os.environ.get("SKIP_SCRAPE", "1") == "1"
     
     GAMES_PER_PAGE = 10
     CARDS_PER_ROW = 3

@@ -482,7 +482,11 @@ class GameDownloaderApp:
             waiting = True
             drain_pending_events()
             while waiting:
-                self._render_mapping_prompt("Controller Setup", f"Press {label}", f"{progress}  (press button)")
+                self._render_mapping_prompt(
+                    "Controller Setup",
+                    f"Press {label}",
+                    f"{progress}  (press button)\nTip: Scraping is currently disabled on muOS; use an external scraper later."
+                )
                 if sdl2.SDL_WaitEvent(ctypes.byref(sdl_event)) == 0:
                     continue
                 if sdl_event.type == sdl2.SDL_QUIT:
@@ -517,6 +521,17 @@ class GameDownloaderApp:
             Config.reload_key_mapping(settings_path)
             self._load_key_mapping()
             logger.info("Controller mapping completed and saved.")
+            # Notify user and exit to apply mapping cleanly
+            exit_deadline = time.time() + 5
+            while time.time() < exit_deadline:
+                remaining = int(exit_deadline - time.time()) + 1
+                self._render_status_text(
+                    "Controller setup saved",
+                    f"Quitting in {remaining}s... Please reopen EmuDrop to use the app."
+                )
+                sdl2.SDL_Delay(500)
+            self.cleanup()
+            sys.exit(0)
         except Exception as e:
             logger.error(f"Failed to save controller mapping: {e}")
         # Clear prompt screen

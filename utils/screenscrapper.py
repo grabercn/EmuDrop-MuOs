@@ -246,6 +246,9 @@ class ScreenScraper:
 
     
     def scrape_rom(self, image_url, file_name, system):
+        if Config.SKIP_SCRAPE:
+            logger.info("Scrape skipped because SKIP_SCRAPE flag is set.")
+            return "Scrape skipped (flag set)"
         file_name_no_ext, _ = os.path.splitext(file_name)
         clean_name = self._clean_image_name(file_name_no_ext)
 
@@ -255,7 +258,11 @@ class ScreenScraper:
             target_dir = os.path.join(muos_catalog_dir, platform_folder, "box")
             target_image = os.path.join(target_dir, f"{clean_name}.png")
         else:
-            target_image = os.environ['IMGS_DIR'].format(SYSTEM=Config.SYSTEMS_MAPPING[system], IMAGE_NAME=clean_name)
+            imgs_dir_tmpl = os.environ.get('IMGS_DIR')
+            if not imgs_dir_tmpl:
+                logger.error("Failed to determine image save path: IMGS_DIR not set and no MUOS catalog dir.")
+                return "Failed to save image: missing target directory"
+            target_image = imgs_dir_tmpl.format(SYSTEM=Config.SYSTEMS_MAPPING[system], IMAGE_NAME=clean_name)
 
         os.makedirs(os.path.dirname(target_image), exist_ok=True)
 
@@ -281,13 +288,21 @@ class ScreenScraper:
             
             with open(target_image, 'wb') as f:
                 f.write(image_response.content)    
+
+            if not os.path.exists(target_image) or os.path.getsize(target_image) == 0:
+                logger.error(f"Image save failed, file missing or empty: {target_image}")
+                return "Failed to save image: write error"
             
             return "Successfully scraped from scrapper"
         
         except Exception as e:
             logger.warning(f"Somthing went wrong while scraping from scrapper: {e}")
             image_path = ImageCache.download_image(image_url) if image_url else Config.DEFAULT_IMAGE_PATH
-            shutil.copy(image_path, target_image)
+            try:
+                shutil.copy(image_path, target_image)
+            except Exception as copy_err:
+                logger.error(f"Failed to save fallback image to {target_image}: {copy_err}")
+                return "Failed to save image: no destination"
             return "Successfully scraped from cache"
         
         finally:
