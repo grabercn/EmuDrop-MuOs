@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+from typing import Optional
 
 class Config:
     """Application configuration settings"""
@@ -34,6 +35,106 @@ class Config:
     IMAGES_CACHE_DIR = os.path.join(IMAGES_DIR, 'cache')
     FONTS_DIR = os.path.join(ASSETS_DIR, 'fonts')
     DEFAULT_IMAGE_PATH = os.path.join(IMAGES_DIR, 'default_image.png')
+    MUOS_CATALOG_DIR = os.environ.get("MUOS_CATALOG_DIR")
+
+    # Optional mapping from platform_id to muOS catalogue display folder
+    MUOS_PLATFORM_NAMES = {
+        # Nintendo
+        "GB": "Nintendo Game Boy",
+        "GBC": "Nintendo Game Boy Color",
+        "GBA": "Nintendo Game Boy Advance",
+        "NDS": "Nintendo DS",
+        "3DS": "Nintendo 3DS",
+        "FC": "Nintendo Famicom",
+        "NES": "Nintendo Entertainment System",
+        "SFC": "Nintendo Super Famicom",
+        "SNES": "Nintendo Super Nintendo Entertainment System",
+        "N64": "Nintendo 64",
+        "N64DD": "Nintendo 64DD",
+        "NGC": "Nintendo GameCube",
+        "VB": "Nintendo Virtual Boy",
+        "SATELLAVIEW": "Nintendo Satellaview",
+        "SGB": "Nintendo Super Game Boy",
+        # Sega
+        "MS": "Sega Master System",
+        "GG": "Sega Game Gear",
+        "MD": "Sega Mega Drive",
+        "GENESIS": "Sega Genesis",
+        "SEGA32X": "Sega 32X",
+        "SEGACD": "Sega CD",
+        "DC": "Sega Dreamcast",
+        "NAOMI": "Sega Naomi",
+        "SATURN": "Sega Saturn",
+        "SG1000": "Sega SG-1000",
+        # Sony
+        "PS": "Sony PlayStation",
+        "PSP": "Sony PlayStation Portable",
+        "PSPMINIS": "Sony PSP Minis",
+        # Arcade / CPS / NeoGeo / MAME
+        "MAME": "Arcade",
+        "MAME2003PLUS": "Arcade",
+        "MAME2010": "Arcade",
+        "CPS1": "Capcom Play System",
+        "CPS2": "Capcom Play System 2",
+        "CPS3": "Capcom Play System 3",
+        "FBNEO": "Final Burn Neo",
+        "NEOGEO": "SNK Neo Geo",
+        "NEOCD": "SNK Neo Geo CD",
+        # NEC / PC Engine
+        "PCE": "NEC PC Engine",
+        "PCECD": "NEC PC Engine CD",
+        "PCFX": "NEC PC-FX",
+        # Atari
+        "ATARI2600": "Atari 2600",
+        "ATARI5200": "Atari 5200",
+        "ATARI7800": "Atari 7800",
+        "ATARIST": "Atari ST",
+        "ATARI800": "Atari 800",
+        "JAGUAR": "Atari Jaguar",
+        "LYNX": "Atari Lynx",
+        # Commodore / Amiga
+        "C64": "Commodore 64",
+        "AMIGA": "Commodore Amiga",
+        "AMIGACD": "Commodore Amiga CD",
+        "AMIGACDTV": "Commodore Amiga CDTV",
+        # Bandai / Wonderswan
+        "WS": "Bandai WonderSwan",
+        "WSC": "Bandai WonderSwan Color",
+        # SNK / Handhelds
+        "NGP": "Neo Geo Pocket",
+        # Misc handheld/retro
+        "POKEMINI": "Nintendo PokeMini",
+        "TI83": "TI-83",
+        "VB": "Nintendo Virtual Boy",
+        "PICO": "PICO",
+        "ODYSSEY": "Magnavox Odyssey 2",
+        "VIDEOPAC": "Magnavox Odyssey 2",
+        "INTELLIVISION": "Mattel Intellivision",
+        "COLECO": "ColecoVision",
+        "COLSGM": "ColecoVision",
+        "CHANNELF": "Fairchild Channel F",
+        "CPC": "Amstrad CPC",
+        "CPLUS4": "Commodore Plus 4",
+        "CPET": "Commodore PET",
+        "CANNONBALL": "OutRun Cannonball",
+        "OPENBOR": "OpenBOR",
+        "SCUMMVM": "ScummVM",
+        "DOS": "MS-DOS",
+        "PC98": "NEC PC-98",
+        "PC88": "NEC PC-88",
+        "X1": "Sharp X1",
+        "X68000": "Sharp X68000",
+        "ZXEIGHTYONE": "Sinclair ZX81",
+        "ZXS": "Sinclair ZX Spectrum",
+        "MSX": "MSX",
+        "MSX2": "MSX2",
+        "VMAC": "Apple Macintosh",
+        # Others
+        "DC": "Sega Dreamcast",
+        "NAOMI": "Sega Naomi",
+        "ARCADE": "Arcade",
+        "MAME2010": "Arcade",
+    }
 
     # Load System OS
     with open(os.path.join(ASSETS_DIR, 'settings.json'), 'r') as f:
@@ -146,6 +247,7 @@ class Config:
         CONTROLLER_BUTTON_R = buttons['CONTROLLER_BUTTON_R']     
         CONTROLLER_BUTTON_SELECT = buttons['CONTROLLER_BUTTON_SELECT'] 
         CONTROLLER_BUTTON_START = buttons['CONTROLLER_BUTTON_START']  
+        CONTROLLER_BUTTON_MENU = buttons.get('CONTROLLER_BUTTON_MENU', 8)
         
         # D-pad button mappings
         CONTROLLER_BUTTON_UP = buttons['CONTROLLER_BUTTON_UP']     
@@ -230,6 +332,29 @@ class Config:
     CARD_WIDTH = 200
     CARD_HEIGHT = 150
     CARD_MARGIN = 20
+
+    def reload_key_mapping(cls, settings_path: Optional[str] = None):
+        """Reload controller button mapping from settings.json."""
+        path = settings_path or os.path.join(cls.ASSETS_DIR, 'settings.json')
+        try:
+            with open(path, 'r') as f:
+                buttons = json.load(f).get('keyMapping', {})
+            cls.CONTROLLER_BUTTON_A = buttons.get('CONTROLLER_BUTTON_A', cls.CONTROLLER_BUTTON_A)
+            cls.CONTROLLER_BUTTON_B = buttons.get('CONTROLLER_BUTTON_B', cls.CONTROLLER_BUTTON_B)
+            cls.CONTROLLER_BUTTON_X = buttons.get('CONTROLLER_BUTTON_X', cls.CONTROLLER_BUTTON_X)
+            cls.CONTROLLER_BUTTON_Y = buttons.get('CONTROLLER_BUTTON_Y', cls.CONTROLLER_BUTTON_Y)
+            cls.CONTROLLER_BUTTON_L = buttons.get('CONTROLLER_BUTTON_L', cls.CONTROLLER_BUTTON_L)
+            cls.CONTROLLER_BUTTON_R = buttons.get('CONTROLLER_BUTTON_R', cls.CONTROLLER_BUTTON_R)
+            cls.CONTROLLER_BUTTON_SELECT = buttons.get('CONTROLLER_BUTTON_SELECT', cls.CONTROLLER_BUTTON_SELECT)
+            cls.CONTROLLER_BUTTON_START = buttons.get('CONTROLLER_BUTTON_START', cls.CONTROLLER_BUTTON_START)
+            cls.CONTROLLER_BUTTON_MENU = buttons.get('CONTROLLER_BUTTON_MENU', getattr(cls, 'CONTROLLER_BUTTON_MENU', 8))
+            cls.CONTROLLER_BUTTON_UP = buttons.get('CONTROLLER_BUTTON_UP', cls.CONTROLLER_BUTTON_UP)
+            cls.CONTROLLER_BUTTON_DOWN = buttons.get('CONTROLLER_BUTTON_DOWN', cls.CONTROLLER_BUTTON_DOWN)
+            cls.CONTROLLER_BUTTON_LEFT = buttons.get('CONTROLLER_BUTTON_LEFT', cls.CONTROLLER_BUTTON_LEFT)
+            cls.CONTROLLER_BUTTON_RIGHT = buttons.get('CONTROLLER_BUTTON_RIGHT', cls.CONTROLLER_BUTTON_RIGHT)
+        except Exception:
+            # On failure, keep existing mapping
+            pass
 
     @classmethod
     def update_screen_size(cls, width, height):

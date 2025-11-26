@@ -5,6 +5,7 @@ import base64
 import os
 import shutil
 import re
+import time
 from utils.config import Config
 from utils.image_cache import ImageCache
 from utils.logger import logger
@@ -71,6 +72,22 @@ class ScreenScraper:
         file_name = file_name.strip().rstrip('.').strip()
         file_name = file_name.replace(' - ', '%20').replace('-', '%20').replace(' ', '%20')
         return file_name
+
+    def _clean_image_name(self, input_file):
+        """Generate a clean, device-friendly image name."""
+        # Preserve disc/disk indicators before stripping brackets
+        disc_match = re.search(r'(disc|disk|cd)[ _-]?(\d+)', input_file, re.IGNORECASE)
+        disc_suffix = ""
+        if disc_match:
+            disc_suffix = f" Disc {disc_match.group(2)}"
+
+        name = re.sub(r'[\[\(\{].*?[\]\)\}]', '', input_file)
+        name = name.replace('_', ' ').replace('.', ' ')
+        name = re.sub(r'[^A-Za-z0-9 \-]', '', name)
+        name = re.sub(r'\s+', ' ', name).strip()
+        if disc_suffix and disc_suffix.strip() not in name:
+            name = f"{name}{disc_suffix}"
+        return name
     
     def _get_system_id(self, system: str) -> str:
             """Get ScreenScraper system ID"""
@@ -230,10 +247,18 @@ class ScreenScraper:
     
     def scrape_rom(self, image_url, file_name, system):
         file_name_no_ext, _ = os.path.splitext(file_name)
-        target_image = os.environ['IMGS_DIR'].format(SYSTEM=Config.SYSTEMS_MAPPING[system], IMAGE_NAME=file_name_no_ext)
-        
+        clean_name = self._clean_image_name(file_name_no_ext)
+
+        muos_catalog_dir = os.environ.get("MUOS_CATALOG_DIR")
+        if muos_catalog_dir:
+            platform_folder = Config.MUOS_PLATFORM_NAMES.get(system) or Config.SYSTEMS_MAPPING.get(system, system)
+            target_dir = os.path.join(muos_catalog_dir, platform_folder, "box")
+            target_image = os.path.join(target_dir, f"{clean_name}.png")
+        else:
+            target_image = os.environ['IMGS_DIR'].format(SYSTEM=Config.SYSTEMS_MAPPING[system], IMAGE_NAME=clean_name)
+
         os.makedirs(os.path.dirname(target_image), exist_ok=True)
-        
+
         if os.path.exists(target_image):
             return "Already scraped"
         

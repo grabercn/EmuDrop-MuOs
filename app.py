@@ -12,6 +12,9 @@ import shutil
 import math
 import time
 import threading
+import json
+import urllib.request
+import ssl
 from dataclasses import dataclass
 from contextlib import contextmanager
 
@@ -94,6 +97,7 @@ class GameDownloaderApp:
         self.loading_screen = None
         self.view_state = ViewState()
         self.nav_state = NavigationState()
+        self.controller = None
         self.held_joy_buttons = {}
         self.held_hat_button = sdl2.SDL_HAT_CENTERED
         self.last_hat_time: int = 0
@@ -108,6 +112,14 @@ class GameDownloaderApp:
         self.search_text: str = ""
         self.selected_download: Optional[str] = None
         self.scroll_offset: int = 0
+        self.pressed_buttons = set()
+        self.key_mapping: Dict[str, Any] = {}
+        self.controller_button_map: Dict[int, int] = {}
+        self.dpad_button_map: Dict[int, int] = {}
+        self.menu_button: Optional[int] = None
+        self.start_button: Optional[int] = None
+        self.mapping_mode: str = "joystick"  # "controller" or "joystick"
+        self.mapping_done_flag = os.path.join(Config.BASE_DIR, ".controller_mapped")
 
         try:
             # Initialize SDL subsystems
@@ -125,6 +137,8 @@ class GameDownloaderApp:
                 Config.SCREEN_WIDTH, 
                 Config.SCREEN_HEIGHT,
             )
+            # Ensure catalog database exists (with on-screen status)
+            self._ensure_catalog_db()
 
             # Initialize views
             self._initialize_views()
@@ -135,6 +149,10 @@ class GameDownloaderApp:
             
             # Initialize joystick if available
             self._initialize_joystick()
+            # Load mapping now that input devices are known
+            self._load_key_mapping()
+            # Optional first-boot controller mapper
+            self._maybe_run_button_mapper()
 
         except SDLError as e:
             logger.error(f"SDL initialization error: {str(e)}", exc_info=True)
@@ -283,12 +301,277 @@ class GameDownloaderApp:
         try:
             num_joysticks = sdl2.SDL_NumJoysticks()
             logger.info(f"Number of joysticks detected: {num_joysticks}")
-            self.joystick = sdl2.SDL_JoystickOpen(0) if num_joysticks > 0 else None
-            if self.joystick:
-                logger.info("Joystick initialized successfully")
+            self.joystick = None
+            if num_joysticks > 0 and sdl2.SDL_IsGameController(0):
+                self.controller = sdl2.SDL_GameControllerOpen(0)
+                if self.controller:
+                    logger.info("GameController initialized successfully")
+            if not self.controller and num_joysticks > 0:
+                self.joystick = sdl2.SDL_JoystickOpen(0)
+                if self.joystick:
+                    logger.info("Joystick initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize joystick: {str(e)}")
             self.joystick = None
+            self.controller = None
+
+    def _load_key_mapping(self) -> None:
+        """Load controller mapping from settings.json into local lookup tables."""
+        try:
+            with open(os.path.join(Config.ASSETS_DIR, 'settings.json'), 'r') as f:
+                settings = json.load(f)
+            mapping = settings.get("keyMapping", {}) or {}
+            mode_from_file = settings.get("keyMappingMode")
+            if mode_from_file in ("controller", "joystick"):
+                self.mapping_mode = mode_from_file
+            else:
+                self.mapping_mode = "controller" if self.controller else "joystick"
+            self.key_mapping = mapping
+            self.controller_button_map = {
+                mapping.get("CONTROLLER_BUTTON_A"): sdl2.SDLK_RETURN,
+                mapping.get("CONTROLLER_BUTTON_B"): sdl2.SDLK_BACKSPACE,
+                mapping.get("CONTROLLER_BUTTON_X"): sdl2.SDLK_d,
+                mapping.get("CONTROLLER_BUTTON_Y"): sdl2.SDLK_d,
+                mapping.get("CONTROLLER_BUTTON_SELECT"): sdl2.SDLK_s,
+                mapping.get("CONTROLLER_BUTTON_START"): sdl2.SDLK_p,
+                mapping.get("CONTROLLER_BUTTON_L"): sdl2.SDLK_PAGEDOWN,
+                mapping.get("CONTROLLER_BUTTON_R"): sdl2.SDLK_PAGEUP,
+            }
+            self.dpad_button_map = {
+                mapping.get("CONTROLLER_BUTTON_UP"): sdl2.SDLK_UP,
+                mapping.get("CONTROLLER_BUTTON_DOWN"): sdl2.SDLK_DOWN,
+                mapping.get("CONTROLLER_BUTTON_LEFT"): sdl2.SDLK_LEFT,
+                mapping.get("CONTROLLER_BUTTON_RIGHT"): sdl2.SDLK_RIGHT,
+            }
+            self.menu_button = mapping.get("CONTROLLER_BUTTON_MENU")
+            self.start_button = mapping.get("CONTROLLER_BUTTON_START")
+        except Exception as e:
+            logger.warning(f"Failed to load key mapping: {e}")
+            self.key_mapping = {}
+            self.controller_button_map = {}
+            self.dpad_button_map = {}
+            self.menu_button = None
+            self.start_button = None
+            self.mapping_mode = "joystick"
+
+    def _render_status_text(self, title: str, subtitle: str = "") -> None:
+        """Render a simple full-screen status message."""
+        sdl2.SDL_SetRenderDrawColor(self.renderer, *Theme.BG_DARK)
+        sdl2.SDL_RenderClear(self.renderer)
+
+        def draw_text(text: str, y: int):
+            color = sdl2.SDL_Color(*Theme.TEXT_PRIMARY)
+            surface = sdl2.sdlttf.TTF_RenderUTF8_Blended(self.font, text.encode('utf-8'), color)
+            if not surface:
+                return
+            texture = sdl2.SDL_CreateTextureFromSurface(self.renderer, surface)
+            surf = surface.contents
+            w = surf.w
+            h = surf.h
+            x = (Config.SCREEN_WIDTH - w) // 2
+            rect = sdl2.SDL_Rect(x, y, w, h)
+            sdl2.SDL_RenderCopy(self.renderer, texture, None, rect)
+            sdl2.SDL_DestroyTexture(texture)
+            sdl2.SDL_FreeSurface(surface)
+
+        draw_text(title, Config.SCREEN_HEIGHT // 3)
+        if subtitle:
+            draw_text(subtitle, Config.SCREEN_HEIGHT // 3 + 60)
+        sdl2.SDL_RenderPresent(self.renderer)
+
+    def _log_input_event(self, source: str, button: Any, mapped_key: Any, detail: str = "") -> None:
+        """Log raw input to help diagnose mapping issues."""
+        logger.info(
+            f"Input event source={source} raw={button} mapped={mapped_key} mode={self.mapping_mode}"
+            + (f" {detail}" if detail else "")
+        )
+
+    def _render_mapping_prompt(self, title: str, prompt: str, progress: str) -> None:
+        """Render a simple full-screen prompt for controller mapping."""
+        self._render_status_text(title, f"{prompt}  |  {progress}")
+
+    def _maybe_run_button_mapper(self) -> None:
+        """Run a simple first-boot controller mapper."""
+        if not (self.controller or self.joystick):
+            return
+        settings_path = os.path.join(Config.ASSETS_DIR, 'settings.json')
+
+        required_keys = {
+            "CONTROLLER_BUTTON_A",
+            "CONTROLLER_BUTTON_B",
+            "CONTROLLER_BUTTON_X",
+            "CONTROLLER_BUTTON_Y",
+            "CONTROLLER_BUTTON_L",
+            "CONTROLLER_BUTTON_R",
+            "CONTROLLER_BUTTON_SELECT",
+            "CONTROLLER_BUTTON_START",
+            "CONTROLLER_BUTTON_MENU",
+            "CONTROLLER_BUTTON_UP",
+            "CONTROLLER_BUTTON_DOWN",
+            "CONTROLLER_BUTTON_LEFT",
+            "CONTROLLER_BUTTON_RIGHT",
+        }
+
+        def mapping_complete(cfg: dict) -> bool:
+            mapping = cfg.get("keyMapping", {})
+            return all(isinstance(mapping.get(k), int) for k in required_keys)
+
+        try:
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
+            if settings.get("keyMappingConfigured"):
+                if mapping_complete(settings):
+                    return
+                logger.info("Key mapping flagged configured but incomplete; rerunning mapper.")
+        except Exception as e:
+            logger.error(f"Failed to load settings for mapping: {e}")
+            return
+
+        prompts = [
+            ("Button A", "CONTROLLER_BUTTON_A"),
+            ("Button B", "CONTROLLER_BUTTON_B"),
+            ("Button X", "CONTROLLER_BUTTON_X"),
+            ("Button Y", "CONTROLLER_BUTTON_Y"),
+            ("Shoulder L", "CONTROLLER_BUTTON_L"),
+            ("Shoulder R", "CONTROLLER_BUTTON_R"),
+            ("Select", "CONTROLLER_BUTTON_SELECT"),
+            ("Start", "CONTROLLER_BUTTON_START"),
+            ("Menu", "CONTROLLER_BUTTON_MENU"),
+            ("D-Pad Up", "CONTROLLER_BUTTON_UP"),
+            ("D-Pad Down", "CONTROLLER_BUTTON_DOWN"),
+            ("D-Pad Left", "CONTROLLER_BUTTON_LEFT"),
+            ("D-Pad Right", "CONTROLLER_BUTTON_RIGHT"),
+        ]
+
+        mapped = {}
+        sdl_event = sdl2.SDL_Event()
+        cooldown_seconds = 2
+        use_controller = self.controller is not None
+        dpad_controller_buttons = {
+            sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP,
+            sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+            sdl2.SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+            sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+        }
+        self.mapping_mode = "controller" if use_controller else "joystick"
+
+        def drain_pending_events():
+            """Clear any queued SDL events so buffered input cannot leak into the next prompt."""
+            purge_event = sdl2.SDL_Event()
+            while sdl2.SDL_PollEvent(ctypes.byref(purge_event)) != 0:
+                pass
+
+        def wait_between_inputs(progress_text: str) -> None:
+            """Show a brief wait screen and ignore input while debouncing mappings."""
+            end_time = time.time() + cooldown_seconds
+            while True:
+                remaining = end_time - time.time()
+                if remaining <= 0:
+                    break
+                self._render_mapping_prompt(
+                    "Controller Setup",
+                    "Waiting before next input...",
+                    f"{progress_text}  |  {math.ceil(remaining)}s"
+                )
+                drain_pending_events()
+                sdl2.SDL_Delay(100)
+            drain_pending_events()
+
+        for idx, (label, key_name) in enumerate(prompts, start=1):
+            progress = f"{idx}/{len(prompts)}"
+            waiting = True
+            drain_pending_events()
+            while waiting:
+                self._render_mapping_prompt("Controller Setup", f"Press {label}", f"{progress}  (press button)")
+                if sdl2.SDL_WaitEvent(ctypes.byref(sdl_event)) == 0:
+                    continue
+                if sdl_event.type == sdl2.SDL_QUIT:
+                    return
+                if use_controller and sdl_event.type == sdl2.SDL_CONTROLLERBUTTONDOWN:
+                    mapped[key_name] = sdl_event.cbutton.button
+                    waiting = False
+                    wait_between_inputs(progress)
+                elif sdl_event.type == sdl2.SDL_JOYBUTTONDOWN:
+                    mapped[key_name] = sdl_event.jbutton.button
+                    waiting = False
+                    wait_between_inputs(progress)
+                elif sdl_event.type == sdl2.SDL_CONTROLLERBUTTONDOWN and sdl_event.cbutton.button in dpad_controller_buttons:
+                    mapped[key_name] = sdl_event.cbutton.button
+                    waiting = False
+                    wait_between_inputs(progress)
+                elif sdl_event.type == sdl2.SDL_JOYHATMOTION:
+                    if "D-Pad" in label:
+                        mapped[key_name] = sdl_event.jhat.value
+                        waiting = False
+                        wait_between_inputs(progress)
+                elif sdl_event.type == sdl2.SDL_KEYDOWN and sdl_event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                    waiting = False
+
+        # Persist mapping
+        settings.setdefault('keyMapping', {}).update(mapped)
+        settings['keyMappingConfigured'] = True
+        settings['keyMappingMode'] = self.mapping_mode
+        try:
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f, indent=4)
+            Config.reload_key_mapping(settings_path)
+            self._load_key_mapping()
+            logger.info("Controller mapping completed and saved.")
+        except Exception as e:
+            logger.error(f"Failed to save controller mapping: {e}")
+        # Clear prompt screen
+        sdl2.SDL_SetRenderDrawColor(self.renderer, *Theme.BG_DARK)
+        sdl2.SDL_RenderClear(self.renderer)
+        sdl2.SDL_RenderPresent(self.renderer)
+
+    def _ensure_catalog_db(self) -> None:
+        """Ensure catalog.db exists; download with on-screen status if missing."""
+        db_path = os.path.join(Config.ASSETS_DIR, 'catalog.db')
+        if os.path.exists(db_path):
+            return
+
+        tags_url = "https://api.github.com/repos/ahmadteeb/EmuDrop/tags"
+        ua = {"User-Agent": "EmuDrop-muOS"}
+        retries = 3
+
+        def fetch_latest_tag():
+            req = urllib.request.Request(tags_url, headers=ua)
+            with urllib.request.urlopen(req, timeout=10, context=ssl._create_unverified_context()) as resp:
+                tags = json.loads(resp.read().decode("utf-8"))
+            for tag in tags:
+                name = tag.get("name", "")
+                if name.endswith("-db"):
+                    ver = name[:-3]
+                    if not ver.startswith("v"):
+                        ver = f"v{ver}"
+                    return ver
+            return None
+
+        try:
+            self._render_status_text("Preparing catalog", "Fetching database tag...")
+            version = fetch_latest_tag()
+            if not version:
+                logger.error("No catalog db tag found; continuing without catalog.")
+                return
+            url = f"https://github.com/ahmadteeb/EmuDrop/releases/download/{version}-db/catalog-{version}.db"
+            for attempt in range(1, retries + 1):
+                self._render_status_text("Preparing catalog", f"Downloading database (attempt {attempt}/{retries})")
+                try:
+                    req = urllib.request.Request(url, headers=ua)
+                    with urllib.request.urlopen(req, timeout=30, context=ssl._create_unverified_context()) as resp:
+                        data = resp.read()
+                    os.makedirs(Config.ASSETS_DIR, exist_ok=True)
+                    with open(db_path, 'wb') as f:
+                        f.write(data)
+                    logger.info(f"catalog.db downloaded ({len(data)} bytes)")
+                    break
+                except Exception as e:
+                    logger.error(f"catalog.db download failed attempt {attempt}: {e}")
+                    time.sleep(1)
+            else:
+                self._render_status_text("Catalog download failed", "Continuing without database.")
+        except Exception as e:
+            logger.error(f"Failed to ensure catalog.db: {e}")
 
     def run(self) -> None:
         """Run the main application loop.
@@ -357,16 +640,59 @@ class GameDownloaderApp:
             elif event.type == sdl2.SDL_KEYDOWN:
                 if not self._handle_input_event(event.key.keysym.sym):
                     return False
+            elif event.type == sdl2.SDL_CONTROLLERBUTTONDOWN:
+                button = event.cbutton.button
+                self.pressed_buttons.add(button)
+                # Quit combo: MENU + START
+                if self.menu_button is not None and self.start_button is not None:
+                    if self.menu_button in self.pressed_buttons and self.start_button in self.pressed_buttons:
+                        return False
+                mapped_key = self.controller_button_map.get(button)
+                if mapped_key is not None:
+                    self._log_input_event("controller_button_down", button, mapped_key)
+                    if not self._handle_controller_button(button):
+                        return False
+                    self.held_joy_buttons[button] = time.time()
+                elif button in {b for b in self.dpad_button_map.keys() if b is not None}:
+                    self._log_input_event("controller_dpad_button_down", button, self.dpad_button_map.get(button))
+                    if not self._handle_d_pad_controller_button(button):
+                        return False
+                    self.held_hat_button = button
+                    self.last_hat_time = time.time()
+            elif event.type == sdl2.SDL_CONTROLLERBUTTONUP:
+                button = event.cbutton.button
+                self.pressed_buttons.discard(button)
+                self._log_input_event("controller_button_up", button, None)
+                if button in {b for b in self.dpad_button_map.keys() if b is not None}:
+                    self.held_hat_button = sdl2.SDL_HAT_CENTERED
+                self.held_joy_buttons.pop(button, None)
             elif event.type == sdl2.SDL_JOYBUTTONDOWN:
                 button = event.jbutton.button
-                if not self._handle_controller_button(button):
-                    return False
-                self.held_joy_buttons[button] = time.time()
+                self.pressed_buttons.add(button)
+                # Quit combo: MENU + START
+                if self.menu_button is not None and self.start_button is not None:
+                    if self.menu_button in self.pressed_buttons and self.start_button in self.pressed_buttons:
+                        return False
+                mapped_key = self.controller_button_map.get(button)
+                if mapped_key is not None:
+                    self._log_input_event("joystick_button_down", button, mapped_key)
+                    if not self._handle_controller_button(button):
+                        return False
+                    self.held_joy_buttons[button] = time.time()
+                elif button in {b for b in self.dpad_button_map.keys() if b is not None}:
+                    self._log_input_event("joystick_dpad_button_down", button, self.dpad_button_map.get(button))
+                    if not self._handle_d_pad_controller_button(button):
+                        return False
+                    self.held_hat_button = button
+                    self.last_hat_time = time.time()
             elif event.type == sdl2.SDL_JOYBUTTONUP:
                 button = event.jbutton.button
+                self.pressed_buttons.discard(button)
+                self._log_input_event("joystick_button_up", button, None)
                 self.held_joy_buttons.pop(button, None)
             elif event.type == sdl2.SDL_JOYHATMOTION:
                 button = event.jhat.value
+                self._log_input_event("joystick_hat_motion", button, self.dpad_button_map.get(button))
                 if not self._handle_d_pad_controller_button(button):
                     return False
                 self.held_hat_button = button
@@ -485,32 +811,18 @@ class GameDownloaderApp:
 
     def _handle_controller_button(self, button):
         # Map controller buttons to keyboard events
-        button_map = {
-            Config.CONTROLLER_BUTTON_A: sdl2.SDLK_RETURN,
-            Config.CONTROLLER_BUTTON_B: sdl2.SDLK_BACKSPACE,
-            Config.CONTROLLER_BUTTON_X: sdl2.SDLK_d,
-            Config.CONTROLLER_BUTTON_SELECT: sdl2.SDLK_s,
-            Config.CONTROLLER_BUTTON_START: sdl2.SDLK_p,
-            Config.CONTROLLER_BUTTON_Y: sdl2.SDLK_SPACE,
-            Config.CONTROLLER_BUTTON_L: sdl2.SDLK_PAGEDOWN,
-            Config.CONTROLLER_BUTTON_R: sdl2.SDLK_PAGEUP
-        }
-        
-        if button in button_map:
-            return self._handle_input_event(button_map[button])
+        if button in self.controller_button_map:
+            mapped_key = self.controller_button_map.get(button)
+            if mapped_key is not None:
+                return self._handle_input_event(mapped_key)
         return True
 
     def _handle_d_pad_controller_button(self, button):
         # Map controller buttons to keyboard events
-        button_map = {
-            Config.CONTROLLER_BUTTON_UP: sdl2.SDLK_UP,
-            Config.CONTROLLER_BUTTON_DOWN: sdl2.SDLK_DOWN,
-            Config.CONTROLLER_BUTTON_LEFT: sdl2.SDLK_LEFT,
-            Config.CONTROLLER_BUTTON_RIGHT: sdl2.SDLK_RIGHT
-        }
-        
-        if button in button_map:
-            return self._handle_input_event(button_map[button])
+        if button in self.dpad_button_map:
+            mapped_key = self.dpad_button_map.get(button)
+            if mapped_key is not None:
+                return self._handle_input_event(mapped_key)
         return True
     
     def _handle_input_event(self, key: int) -> bool:
@@ -525,7 +837,7 @@ class GameDownloaderApp:
         
         # Handle alert dismissal first
         if self.alert_manager.is_showing():
-            if key in [sdl2.SDLK_RETURN, sdl2.SDLK_BACKSPACE, Config.CONTROLLER_BUTTON_A, Config.CONTROLLER_BUTTON_B]:
+            if key in [sdl2.SDLK_RETURN, sdl2.SDLK_BACKSPACE]:
                 self.alert_manager.hide_alert()
             return True
         
@@ -1306,6 +1618,8 @@ class GameDownloaderApp:
                 
             if hasattr(self, 'joystick') and self.joystick:
                 sdl2.SDL_JoystickClose(self.joystick)
+            if hasattr(self, 'controller') and self.controller:
+                sdl2.SDL_GameControllerClose(self.controller)
                 
             if hasattr(self, 'renderer'):
                 sdl2.SDL_DestroyRenderer(self.renderer)

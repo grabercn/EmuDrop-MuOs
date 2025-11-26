@@ -1,6 +1,6 @@
-# EmuDrop
+# EmuDrop (muOS Fork)
 
-EmuDrop is a controller-first ROM downloader built with Python and SDL2. This fork packages the app for muOS while keeping compatibility with the TrimUI family.
+EmuDrop is a controller-first ROM downloader built with Python and SDL2. This fork is tailored for muOS devices (RG35XX family, etc.), with packaging, SDL fixes, and first-boot controller mapping maintained by **Christian Graber**. Base project by Ahmad Teeb.
 
 ## Support Me
 If you like this project, consider supporting on Buy Me a Coffee:

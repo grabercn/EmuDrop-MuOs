@@ -76,6 +76,7 @@ mkdir -p "${XDG_RUNTIME_DIR}"
 export ROMS_DIR="${ROOT_DIR}/ROMS/"
 export IMGS_DIR="${ROOT_DIR}/ROMS/{SYSTEM}/images/{IMAGE_NAME}-image.png"
 export EXECUTABLES_DIR="${APP_DIR}/assets/executables/"
+export MUOS_CATALOG_DIR="${ROOT_DIR}/MUOS/info/catalogue"
 
 # Debug info
 echo "--- Debug Info ---" >> "${LOG_FILE}"
@@ -87,60 +88,6 @@ ls -lh "${APP_DIR}/libs" >> "${LOG_FILE}" 2>&1 || echo "No libs dir" >> "${LOG_F
 echo "Listing deps:" >> "${LOG_FILE}"
 ls -lh "${APP_DIR}/deps" >> "${LOG_FILE}" 2>&1 || echo "No deps dir" >> "${LOG_FILE}"
 echo "------------------" >> "${LOG_FILE}"
-
-# Ensure the game catalog exists; download latest DB release from GitHub if missing
-if [ ! -s "${APP_DIR}/assets/catalog.db" ]; then
-    echo "Catalog DB missing, downloading latest release..." | tee -a "${LOG_FILE}"
-    "${PYTHON_BIN}" - <<'PY' >>"${LOG_FILE}" 2>&1 || {
-        echo "Failed to bootstrap catalog.db. Check network connectivity and try again." | tee -a "${LOG_FILE}"
-        exit 1
-    }
-import json, os, sys, urllib.request, pathlib, ssl
-
-REPO = "ahmadteeb/EmuDrop"
-ASSETS_DIR = pathlib.Path(os.environ.get("APP_DIR", ".")) / "assets"
-DB_PATH = ASSETS_DIR / "catalog.db"
-TAGS_URL = f"https://api.github.com/repos/{REPO}/tags"
-CTX = ssl._create_unverified_context()
-
-def latest_db_tag():
-    try:
-        with urllib.request.urlopen(TAGS_URL, timeout=10, context=CTX) as resp:
-            tags = json.loads(resp.read().decode("utf-8"))
-        for tag in tags:
-            name = tag.get("name", "")
-            if name.endswith("-db"):
-                version = name[:-3]
-                if not version.startswith("v"):
-                    version = f"v{version}"
-                return version
-    except Exception as e:
-        print(f"[catalog] tag fetch failed: {e}")
-    return None
-
-def download_db(version):
-    url = f"https://github.com/{REPO}/releases/download/{version}-db/catalog-{version}.db"
-    try:
-        with urllib.request.urlopen(url, timeout=30, context=CTX) as resp:
-            data = resp.read()
-        ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-        with open(DB_PATH, "wb") as f:
-            f.write(data)
-        print(f"[catalog] downloaded {len(data)} bytes from {url}")
-        return True
-    except Exception as e:
-        print(f"[catalog] download failed: {e}")
-        return False
-
-ver = latest_db_tag()
-if not ver:
-    print("[catalog] no db tag found; aborting")
-    sys.exit(1)
-if not download_db(ver):
-    sys.exit(1)
-print(f"[catalog] catalog.db ready at {DB_PATH}")
-PY
-fi
 
 # Discover available SDL video drivers on the device
 AVAILABLE_DRIVERS="$(
